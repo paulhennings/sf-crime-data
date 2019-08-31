@@ -1,151 +1,260 @@
-var mapModule = (function(window,$){
-    
-	/*Global variables within the module scope*/
-    var _mapContainer;
-	var _mapboxBaseMapCode = 'datasf.j9b9ihf0';
-	var _components = {
-	    "map": null,
-		"layers": {
-		    "user": L.mapbox.featureLayer(),
-			"searchradius": null,
-			"incidents": L.mapbox.featureLayer()
-		},
-		"cluster": new L.MarkerClusterGroup({"showCoverageOnHover": false})
-	};
-    
-    /**
-      * @param {object} domContainer
-    */		
-	function _init(domContainer){
-	
-	    //Initialize the module here
-		if(!!domContainer){
-		    //Yeah - it does exist
-           _mapContainer = domContainer; 
-           _drawMap();
-		}
-		else
-		{
-		    //Error
-		    alert("Sidebar container doesn't exist");
-		}		
-	}
-	
-	function _enableAllLayers(){
-	    for(i in _components["layers"]){
-			console.log();
-			_components["layers"][i].addTo(_components["map"]);			
-		}
-	}
-	
-    function _drawMap(){
-        L.mapbox.accessToken = 'pk.eyJ1IjoiZGF0YXNmIiwiYSI6Ilo3bVlHRDQifQ.7gkiPnZtioL8CnCvJ5z9Bg';
-        
-		//Create our map instance
-		_components["map"] = L.mapbox.map(_mapContainer.prop("id"), _mapboxBaseMapCode).setView([37.767806, -122.438153], 12);
-		_components["layers"]["searchradius"] = L.circle([37.767806, -122.438153], 402.3).addTo(_components["map"]);
-		
-		//Plot the initial user location
-		_components["layers"]["user"].setGeoJSON({ "type": "Feature","properties": {"marker-size": "large"}, "geometry": {"type": "Point", "coordinates": [-122.438153,37.767806]}});
-		
-		//Add all layers to the map instance
-		_enableAllLayers();
-		
-	}
+var mapModule = (function(window,$) {
 
-    /**
-      * @param {object} response
-    */		
-	function _drawApiResponse(response){
-	    if(response["features"].length>0){
-		    //Color all incident records to RED
-			for(i=0;i<response["features"].length;i++){
-			    response["features"][i]["properties"] = $.extend({}, response["features"][i]["properties"], {"marker-color": "#000080", "marker-symbol": "police", "marker-size": "small"});
-			}
-			
-			//Clear the cluster contents
-			_components["cluster"].clearLayers();
-			
-			//Set the map content based on the information coming from the API response
-			_components["layers"]["incidents"].setGeoJSON(response);
-			
-            _components["layers"]["incidents"].eachLayer(function(layer) {
-                _components["cluster"].addLayer(layer);
-                var marker = layer;
-                var feature = marker.feature;
-  
-                var popupContent = feature.properties.category;
-  
-                marker.bindPopup(popupContent);				
-            });
-            
-			_components["map"].addLayer(_components["cluster"]);
-            
-			_components["layers"]["incidents"].clearLayers();			
-		}
-		else
-		{
-		    //We received no results from the API, delete map contents
-			_components["layers"]["incidents"].clearLayers();
-		}
-		
-		//Set map bounds to the bounds of the search radius
-		_components["map"].fitBounds(_components["layers"]["searchradius"].getBounds());
-			
-		//Hide the loader screen
-		_hideLoader();
-	}
-	
-    /**
-      * @param {object} feature
-    */		
-	function _plotUserLocation(feature){
-	    _components["layers"]["user"].setGeoJSON(feature);
-		_components["layers"]["searchradius"].setLatLng([feature.geometry.coordinates[1], feature.geometry.coordinates[0]]);
-		_components["layers"]["searchradius"].setRadius(_getUserSearchRadius());
-	}
-	
-	function _getUserLocation(){
-	    return _components["layers"]["user"].getGeoJSON();    
-	}
-	
-    /**
-      * @param {object} feature
-    */		
-	function _centerMapOnLocation(feature){
-	    _components["map"].setView([feature.geometry.coordinates[1], feature.geometry.coordinates[0]], 14);
-	}
+    var MAPBOX_ACCESS_TOKEN = resourceTokensModule.MAPBOX_ACCESS_TOKEN;
+    var MAPBOX_MAP_STYLE_ID = 'lightfox.1n10e3dp';
+    var MAP_CONTAINER_ELEMENT_ID = 'map';
 
-    /**
-      * @param {number} meters
-    */		
-	function _setUserSearchRadius(meters){
-	    _components["layers"]["searchradius"].setRadius(parseFloat(meters));
-		return _components["layers"]["searchradius"].getRadius();
-	}
-
-	function _getUserSearchRadius(){
-		return _components["layers"]["searchradius"].getRadius();
-	}
-	
-	function _showLoader(){
-        _mapContainer.find(".loading").show();	
-	}
-	
-	function _hideLoader(){
-        _mapContainer.find(".loading").hide();	
-	}	
-	
-    return {
-	    init: _init,
-		plotUserLocation: _plotUserLocation,
-		centerMapOnLocation: _centerMapOnLocation,
-		getUserSearchRadius:_getUserSearchRadius,
-		setUserSearchRadius:_setUserSearchRadius,
-		getUserLocation: _getUserLocation,
-		drawApiResponse:_drawApiResponse,
-		showLoader: _showLoader,
-		hideLoader: _hideLoader
+    var SEARCH_MARKER_GEOJSON = {
+        type: 'Feature',
+        geometry: { type: 'Point' },
+        properties: { 'marker-size': 'large' }
     };
-  
+/*the following objects sets the custom marker icons for each CSCategory*/
+    var iconArray= ["crimeIcon", "assaultIcon","arsonIcon","burglaryIcon","datingIcon","domesticIcon",
+    "drugsIcon",'hateIcon',"liquorIcon","motorIcon", "robberyIcon", "sexIcon", "stalkingIcon","weaponsIcon"];
+
+    for(i=0; i<iconArray.length; i++){
+      iconArray[i]= L.icon(
+          {
+              iconUrl: './gfx/' + iconArray[i] + '.svg',
+              iconSize: [40,40],
+              iconAnchor: [20,40],
+              popupAnchor: [0,-35]
+          }
+        )
+      }
+
+/*the following is old code using built in Mapbox Maki icons
+    var INCIDENT_MARKER_PROPERTIES = {
+        'marker-color': '#000080',
+        'marker-symbol': 'police',
+        'marker-size': 'small'
+    };*/
+
+    var SHAPE_STYLE_SETTINGS = {
+        color: '#0033ff',
+        fillColor: '#0033ff',
+        weight: 5,
+        fillOpacity: 0.2,
+        opacity: 0.5
+    };
+
+    var DRAW_CONTROL_SETTINGS = {
+        draw: {
+            polyline: false,
+            polygon: { shapeOptions: SHAPE_STYLE_SETTINGS },
+            rectangle: { shapeOptions: SHAPE_STYLE_SETTINGS },
+            circle: { shapeOptions: SHAPE_STYLE_SETTINGS }
+        }
+    };
+
+    var INCIDENT_CLUSTER_LAYER_SETTINGS = {
+        showCoverageOnHover: false
+    };
+
+    var METERS_PER_FOOT = 0.3048;
+
+    var searchAreaGroup = L.featureGroup();
+    var incidentLayer, incidentClusterGroup;
+
+    var map;
+
+    function _init() {
+        L.mapbox.accessToken = MAPBOX_ACCESS_TOKEN;
+        map = L.mapbox.map(MAP_CONTAINER_ELEMENT_ID, MAPBOX_MAP_STYLE_ID);
+
+        var drawControl = new L.Control.Draw(DRAW_CONTROL_SETTINGS).addTo(map);
+        searchAreaGroup.addTo(map);
+
+        map.on('draw:created', _afterDraw);
+        var legend = L.control({position: 'bottomright'});
+        legend.onAdd = function (map) {
+        var div = L.DomUtil.create('div', 'info legend');
+        div.innerHTML = '<div> <button type="button" id="legend-button" class="btn btn-primary btn-sm" data-toggle="modal" data-target="#myLegend">'+
+                        'Legend </button></div>'
+         return div;
+         };
+         legend.addTo(map);
+         }
+
+    function _afterDraw(e) {
+        switch(e.layerType) {
+            case 'polygon': _afterDrawPolygon(e);
+                break;
+            case 'rectangle': _afterDrawRectangle(e);
+                break;
+            case 'circle': _afterDrawCircle(e);
+                break;
+            case 'marker': _afterDrawMarker(e);
+                break;
+        }
+    }
+
+    function _afterDrawPolygon(e) {
+        viewModelModule.searchShapeType = 'polygon';
+        viewModelModule.searchGeoJson = e.layer.toGeoJSON();
+        viewModelModule.latitude = e.layer._latlngs[0].lat;
+        viewModelModule.longitude = e.layer._latlngs[0].lng;
+        viewModelModule.searchAddress = null;
+        pageModule.loadIncidentData();
+    }
+
+    function _afterDrawRectangle(e) {
+        viewModelModule.searchShapeType = 'polygon';
+        viewModelModule.searchGeoJson = e.layer.toGeoJSON();
+        viewModelModule.latitude = e.layer._latlngs[1].lat;
+        viewModelModule.longitude = e.layer._latlngs[1].lng;
+        viewModelModule.searchAddress = null;
+        pageModule.loadIncidentData();
+    }
+
+    function _afterDrawCircle(e) {
+        viewModelModule.searchShapeType = 'radial';
+        viewModelModule.latitude = e.layer._latlng.lat;
+        viewModelModule.longitude = e.layer._latlng.lng;
+        viewModelModule.searchRadius = _convertFromMetersToFeet(e.layer._mRadius);
+        viewModelModule.searchAddress = null;
+        pageModule.loadIncidentData();
+    }
+
+    function _afterDrawMarker(e) {
+        viewModelModule.searchShapeType = 'radial';
+        viewModelModule.latitude = e.layer._latlng.lat;
+        viewModelModule.longitude = e.layer._latlng.lng;
+        viewModelModule.searchAddress = null;
+        pageModule.loadIncidentData();
+    }
+
+    function _drawPolygonIncidents(incidentGeoJson) {
+        _drawPolygonSearchArea();
+        _drawIncidents(incidentGeoJson);
+    }
+
+    function _drawRadialIncidents(incidentGeoJson) {
+        _drawRadialSearchArea();
+        _drawIncidents(incidentGeoJson);
+    }
+
+    function _drawPolygonSearchArea() {
+        var searchAreaGeoJson = viewModelModule.searchGeoJson;
+        var searchAreaLayer = L.mapbox.featureLayer(searchAreaGeoJson)
+            .setStyle(SHAPE_STYLE_SETTINGS);
+
+        searchAreaGroup.clearLayers()
+            .addLayer(searchAreaLayer);
+    }
+
+    function _drawRadialSearchArea() {
+        var latitude = viewModelModule.latitude,
+            longitude = viewModelModule.longitude,
+            radius = _convertFromFeetToMeters(viewModelModule.searchRadius);
+
+        var searchMarkerGeoJson = $.extend(true, {}, SEARCH_MARKER_GEOJSON, {
+            geometry: { coordinates: [ longitude, latitude ] }
+        });
+
+        var searchMarkerLayer = L.mapbox.featureLayer(searchMarkerGeoJson);
+        var searchAreaLayer = L.circle([latitude, longitude], radius);
+
+        searchAreaGroup.clearLayers()
+            .addLayer(searchMarkerLayer)
+            .addLayer(searchAreaLayer);
+    }
+    /*_drawIncident function is the actual rendering process of putting a incdidentGeoJson on
+    to a map*/
+    function _drawIncidents(incidentGeoJson) {
+        if(incidentLayer) {
+            map.removeLayer(incidentLayer)
+        }
+
+        if(incidentClusterGroup) {
+            map.removeLayer(incidentClusterGroup);
+        }
+        /*makes a MapBox featurelayer that adds geojson to a map read lyzidiamond.com/posts/external-geojson-mapbox*/
+        incidentLayer = L.mapbox.featureLayer();
+        /*maker clustering with leaflet read: asmaloney.com/2015/06/code/clustering-markers-on-leaflet-maps*/
+        incidentClusterGroup = new L.MarkerClusterGroup(INCIDENT_CLUSTER_LAYER_SETTINGS);
+        /*the below code is the old way of assigning icon to a incident using built in mapbox Maki icons*/
+        /*$.each(incidentGeoJson.features, function(index, feature) {
+            $.extend(feature.properties, INCIDENT_MARKER_PROPERTIES);
+        });*/
+        /*the following is the actual descision making process of assigning icons to a certain CSCategory*/
+        incidentLayer.setGeoJSON(incidentGeoJson).eachLayer(function(layer) {
+          //this line below changes icon using leaflet Icon objects.
+          switch(true) {
+          case (layer.feature.properties.cscategory==="AGGRAVATED ASSAULT"):
+              layer.setIcon(iconArray[1]);
+              break;
+          case(layer.feature.properties.cscategory==="ARSON"):
+              layer.setIcon(iconArray[2]);
+              break;
+          case (layer.feature.properties.cscategory==="BURGLARY"):
+              layer.setIcon(iconArray[3]);
+              break;
+          case (layer.feature.properties.cscategory==="DATING VIOLENCE"):
+              layer.setIcon(iconArray[4]);
+              break;
+          case(layer.feature.properties.cscategory==="DOMESTIC VIOLENCE"):
+              layer.setIcon(iconArray[5]);
+              break;
+          case(layer.feature.properties.cscategory==="DRUG-RELATED VIOLATIONS"):
+              layer.setIcon(iconArray[6]);
+              break;
+          case(layer.feature.properties.cscategory==="HATE CRIMES"):
+              layer.setIcon(iconArray[7])
+              break;
+          case(layer.feature.properties.cscategory==="LIQUOR LAW VIOLATIONS"):
+              layer.setIcon(iconArray[8]);
+              break;
+          case(layer.feature.properties.cscategory==="MOTOR VEHICLE THEFT"):
+              layer.setIcon(iconArray[9]);
+              break;
+          case(layer.feature.properties.cscategory==="ROBBERY"):
+              layer.setIcon(iconArray[10]);
+              break;
+          case(layer.feature.properties.cscategory==="SEX OFFENSES"):
+              layer.setIcon(iconArray[11]);
+              break;
+          case(layer.feature.properties.cscategory==="STALKING"):
+              layer.setIcon(iconArray[12]);
+              break;
+          case(layer.feature.properties.cscategory==="WEAPONS POSSESSION"):
+              layer.setIcon(iconArray[13]);
+              break;
+
+            default:
+              layer.setIcon(iconArray[0]);
+            break;
+          }
+
+            incidentClusterGroup.addLayer(layer);
+            layer.bindPopup(_buildIncidentPopupContent(layer.feature.properties));
+        });
+        incidentLayer.clearLayers();
+
+        map.addLayer(incidentLayer)
+            .addLayer(incidentClusterGroup)
+            .fitBounds(searchAreaGroup.getBounds());
+    }
+
+    function _buildIncidentPopupContent(properties) {
+        var newDate = properties.date;
+        var formattedDate = newDate.slice(5,7) + "/" + newDate.slice(8,10) + "/" + newDate.slice(0,4);
+        return properties.descript + " on " + formattedDate;
+    }
+
+    function _convertFromFeetToMeters(feet) {
+        return feet * METERS_PER_FOOT;
+    }
+
+    function _convertFromMetersToFeet(meters) {
+        return meters / METERS_PER_FOOT;
+    }
+
+    return {
+        init: _init,
+        drawPolygonIncidents: _drawPolygonIncidents,
+        drawRadialIncidents: _drawRadialIncidents
+    };
+
 })(window, jQuery);
